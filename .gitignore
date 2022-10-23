@@ -1,0 +1,15 @@
+.DS_Store
+.idea
+thumbs.db
+*.pyc
+
+!.gitkeep
+yarn-error.log
+yarn.lock
+package-lock.json
+
+.venv
+build
+*.egg-info
+
+_tmp
