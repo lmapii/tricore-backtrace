@@ -2,6 +2,9 @@
 $ pipenv --rm
 $ mkdir .venv
 $ pipenv install --dev
-$ pipenv install '-e .'
+# install
+$ pipenv install -e .
+# development mode
+$ python -m pip install -e .
 $ pipenv shell
 ```
