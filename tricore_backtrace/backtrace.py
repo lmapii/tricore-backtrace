@@ -5,7 +5,13 @@ import json
 from elftools.elf.sections import Symbol
 from elftools.dwarf.compileunit import CompileUnit
 
-from .elfinfo import ElfData, match_subprogram, get_file_detail_for_cu, match_line
+from .elfinfo import (
+    ElfData,
+    match_subprogram,
+    get_file_detail,
+    match_line,
+    fun_prototype,
+)
 from .common import as_string
 
 
@@ -23,6 +29,8 @@ class Backtrace:
     def __repr__(self):
         repr_ = self.__dict__
         repr_["addr"] = f"0x{repr_['addr']:x}"
+        # if self.debug_info is not None:
+        #     repr_["debug_info"]["die"] = f"{self.debug_info['die']}"
         return f"{self.__class__.__name__}: {json.dumps(repr_, indent=2)}"
 
     def load_symbol(self, sym_a: Symbol, sym_b: Symbol, override=False) -> bool:
@@ -60,8 +68,9 @@ class Backtrace:
                 if prog is None:
                     continue
                 fun = as_string(prog.attributes["DW_AT_name"].value)
-                loc = get_file_detail_for_cu(prog)
-                self.debug_info = {"fun": fun, "loc": loc}
+                loc = get_file_detail(prog)
+                proto = fun_prototype(prog)
+                self.debug_info = {"fun": fun, "loc": loc, "proto": proto}
                 break
 
             if self.debug_info is not None:

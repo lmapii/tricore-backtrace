@@ -122,7 +122,7 @@ def match_line(line_prog: LineProgram, address: int) -> Tuple[str, int] | None:
     return None
 
 
-def get_file_detail_for_cu(die: DIE) -> str | None:
+def get_file_detail(die: DIE) -> str | None:
     """
     Provides the composed file path for the compilation unit, if available.
     """
@@ -138,3 +138,85 @@ def get_file_detail_for_cu(die: DIE) -> str | None:
     path_ = os.path.join(die_comp_path, die_file_path)
     # DW_AT_comp_dir sometimes double-escapes backslashes ...
     return os.path.normpath(path_.replace("\\\\", "/").replace("\\", "/"))
+
+
+# TODO: don't log, provide error with list
+def _traverse_type(die: DIE) -> list[str]:
+    """
+    Experimental, recursive function for traversing the debugging information to reconstruct
+    a DW_AT_type value.
+    """
+    tag = as_string(die.tag)
+
+    # ignored qualifiers that are not important for the type re-construction, i.e., the
+    # following qualifiers will simply not be displayed in the reconstruction.
+    skip = [
+        "DW_TAG_packed_type",
+        "DW_TAG_restrict_type",
+        "DW_TAG_shared_type",
+    ]
+    if tag in skip:
+        return _traverse_type(die.get_DIE_from_attribute("DW_AT_type"))
+
+    # the following qualifiers are important and must therefore be annotated to the tag. they
+    modifiers = {
+        "DW_TAG_volatile_type": "volatile",
+        "DW_TAG_const_type": "const",
+        "DW_TAG_pointer_type": "*",
+        "DW_TAG_union_type": "union",
+        "DW_TAG_structure_type": "struct",
+        "DW_TAG_array_type": "[]",
+        "DW_TAG_reference_type": "&",
+        "DW_TAG_rvalue_reference_type": "&&",
+    }
+    if tag in modifiers:
+        return _traverse_type(die.get_DIE_from_attribute("DW_AT_type")) + [
+            modifiers[die.tag]
+        ]
+
+    # for re-constructing a prototype, (base) types and classes are sufficient, i.e., it is not
+    # necessary to further resolve the type to its base-type. this could be done in the future
+    # to determine the actual argument size and to assign function parameter values from the
+    # lower context or stack to the call.
+    types_ = [
+        "DW_TAG_base_type",
+        "DW_TAG_typedef",
+        "DW_TAG_class_type",
+    ]
+    if tag in types_:
+        return [as_string(die.attributes["DW_AT_name"].value)]
+
+    logging.warning("Unknown DWARF tag %s, aborting traverse with <unknown>", tag)
+    return ["<unknown>"]
+
+
+def fun_prototype(die: DIE) -> str:
+    """
+    This function attempts to reconstruct a function prototype using DWARF information. It is higly
+    experimental and may not support all variants and/or options.
+    """
+    if die.tag != "DW_TAG_subprogram":
+        raise ElfInfoError(f"Unsupported tag '{die.tag}', expected 'DW_TAG_subprogram'")
+
+    fun_name = "<unnamed>"
+    if "DW_AT_name" in die.attributes:
+        fun_name = as_string(die.attributes["DW_AT_name"].value)
+
+    fun_ret = "void"
+    if "DW_AT_type" in die.attributes:
+        fun_ret = " ".join(_traverse_type(die.get_DIE_from_attribute("DW_AT_type")))
+
+    fun_args = []
+    for child in die.iter_children():
+        if child.tag == "DW_TAG_formal_parameter":
+            arg_name = "<unnamed>"
+            arg_type = "<unknown>"
+            if "DW_AT_name" in child.attributes:
+                arg_name = as_string(child.attributes["DW_AT_name"].value)
+            if "DW_AT_type" in child.attributes:
+                arg_type = " ".join(
+                    _traverse_type(child.get_DIE_from_attribute("DW_AT_type"))
+                )
+            fun_args.append(f"{arg_type} {arg_name}")
+
+    return " ".join([fun_ret, fun_name, "(", ", ".join(fun_args), ")"])
