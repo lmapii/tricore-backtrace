@@ -4,6 +4,10 @@ import sys
 import logging
 
 
+class Err(Exception):  # pylint: disable=missing-class-docstring
+    pass
+
+
 def as_string(data):
     """
     Helper function to enforce UTF-8 encoding on bytes and strings.

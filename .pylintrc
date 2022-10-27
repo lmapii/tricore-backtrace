@@ -4,3 +4,6 @@ max-line-length=100
 [MESSAGES CONTROL]
 disable=
     missing-module-docstring
+
+[MASTER]
+load-plugins=pylint_protobuf

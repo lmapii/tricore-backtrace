@@ -1,20 +1,16 @@
 # -*- coding: utf-8 -*-
 
 import os
-from typing import Tuple
 
 import logging
+from typing import List, Tuple
 
 from elftools.elf.elffile import ELFFile
 from elftools.dwarf.die import DIE
 from elftools.dwarf.lineprogram import LineProgram
 from elftools.dwarf.descriptions import describe_form_class
 
-from .common import as_string
-
-
-class ElfInfoError(Exception):  # pylint: disable=missing-class-docstring
-    pass
+from .common import as_string, Err
 
 
 class ElfData:  # pylint: disable=too-few-public-methods
@@ -32,9 +28,9 @@ class ElfData:  # pylint: disable=too-few-public-methods
             self._symtab_ = elf_file.get_section_by_name(".symtab")
 
             if not elf_file.has_dwarf_info():
-                raise ElfInfoError("No DWARF information found in .elf file")
+                raise Err("No DWARF information found in .elf file")
             if self._symtab_ is None:
-                raise ElfInfoError("No symbol table found in .elf file")
+                raise Err("No symbol table found in .elf file")
 
             self.aranges = self.dwarf_info.get_aranges()
 
@@ -54,22 +50,23 @@ class ElfData:  # pylint: disable=too-few-public-methods
             )
 
 
-def match_subprogram(entry: DIE, address: int) -> DIE | None:
+def match_address(entry: DIE, address: int) -> bool:
     """
     Adapted from `pyelftools/examples/dwarf_decode_address.py::decode_file_line`.
     Tries to match the given debug info entry for the given address: If it is a subprogram, it
     checks if the given address is within its range. This function does not support subprograms that
     have split address ranges.
     """
-    if entry.tag != "DW_TAG_subprogram":
-        return None
-
     try:
         name_ = entry.attributes["DW_AT_name"].value
+    except:  # pylint: disable=bare-except
+        name_ = f"{entry.tag} at {entry.offset}"
+
+    try:
         lo_pc_val = entry.attributes["DW_AT_low_pc"].value
         hi_pc_attr = entry.attributes["DW_AT_high_pc"]
     except:  # pylint: disable=bare-except
-        return None
+        return False
 
     # DWARF v4 in section 2.17 describes how to interpret the DW_AT_high_pc attribute based on the
     # class of its form. For class 'address' it's taken as an absolute address (similarly to
@@ -87,10 +84,18 @@ def match_subprogram(entry: DIE, address: int) -> DIE | None:
             name_,
             hi_pc_class,
         )
+        return False
+
+    if lo_pc_val <= address < hi_pc:
+        return True
+    return False
+
+
+def match_subprogram(entry: DIE, address: int) -> DIE | None:
+    if entry.tag != "DW_TAG_subprogram":
         return None
 
-    # logging.info("name %s", name_)
-    if lo_pc_val <= address < hi_pc:
+    if match_address(entry, address):
         return entry
     return None
 
@@ -196,7 +201,7 @@ def fun_prototype(die: DIE) -> str:
     experimental and may not support all variants and/or options.
     """
     if die.tag != "DW_TAG_subprogram":
-        raise ElfInfoError(f"Unsupported tag '{die.tag}', expected 'DW_TAG_subprogram'")
+        raise Err(f"Unsupported tag '{die.tag}', expected 'DW_TAG_subprogram'")
 
     fun_name = "<unnamed>"
     if "DW_AT_name" in die.attributes:
@@ -220,3 +225,44 @@ def fun_prototype(die: DIE) -> str:
             fun_args.append(f"{arg_type} {arg_name}")
 
     return " ".join([fun_ret, fun_name, "(", ", ".join(fun_args), ")"])
+
+
+def expand_inline(die: DIE, addr: int) -> List:
+    if die is None:
+        return []
+
+    for child in die.iter_children():
+        # check if there are inlined routines
+        if child.tag != "DW_TAG_inlined_subroutine":
+            continue
+
+        # check if there is a known line for the inlined routine. if not, there's no point
+        # in expanding this subroutine since we can't provide any additional information.
+        if "DW_AT_call_line" not in child.attributes:
+            continue
+
+        prog = child.get_DIE_from_attribute("DW_AT_abstract_origin")
+        # check if we can find a subprogram / debug information for the inlined function
+        if not match_address(child, addr):
+            continue
+
+        # we found an a child with a known call line
+        prog = child.get_DIE_from_attribute("DW_AT_abstract_origin")
+
+        call_line = child.attributes["DW_AT_call_line"].value
+        line_prog = die.dwarfinfo.line_program_for_CU(die.cu)
+        for entry in line_prog.get_entries():
+            if entry.state is None:
+                continue
+            if int(entry.state.line) == int(call_line):
+                filename = line_prog["file_entry"][entry.state.file - 1].name
+                return [
+                    {
+                        "line": child.attributes["DW_AT_call_line"].value,
+                        "file": as_string(filename),
+                        "addr": entry.state.address,
+                        "prog": prog,
+                    }
+                ] + expand_inline(child, addr)
+
+    return []

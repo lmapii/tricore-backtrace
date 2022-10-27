@@ -1,36 +1,45 @@
 # pylint: disable=missing-docstring
 
 import json
+from typing import List
+from typing_extensions import Self
 
 from elftools.elf.sections import Symbol
-from elftools.dwarf.compileunit import CompileUnit
+from elftools.dwarf.die import DIE
 
 from .elfinfo import (
     ElfData,
+    expand_inline,
     match_subprogram,
-    get_file_detail,
     match_line,
     fun_prototype,
 )
 from .common import as_string
 
 
+def __guess_address__(address: str | int) -> int:
+    if isinstance(address, str):
+        return int(address, 0)  # guess the base
+    return address
+
+
 class Backtrace:
     def __init__(self, address: str | int) -> None:
-        if isinstance(address, str):
-            self.addr = int(address, 0)  # guess the base
-        else:
-            self.addr = address
-
         self.sym = None
         self.debug_info = None
         self.line_prog = None
+        self.addr = __guess_address__(address)
+        self.die = None
 
     def __repr__(self):
-        repr_ = self.__dict__
-        repr_["addr"] = f"0x{repr_['addr']:x}"
-        # if self.debug_info is not None:
-        #     repr_["debug_info"]["die"] = f"{self.debug_info['die']}"
+        # repr_ = self.__dict__
+        repr_ = {
+            "addr": f"0x{self.addr:x}",
+            "sym": self.sym,
+            "debug_info": self.debug_info,
+            "line_prog": self.line_prog,
+            # "die": f"{self.die}",
+        }
         return f"{self.__class__.__name__}: {json.dumps(repr_, indent=2)}"
 
     def load_symbol(self, sym_a: Symbol, sym_b: Symbol, override=False) -> bool:
@@ -45,6 +54,14 @@ class Backtrace:
             }
             return True
         return False
+
+    def set_debug_info(self, die: DIE):
+        self.debug_info = {
+            "fun": as_string(die.attributes["DW_AT_name"].value),
+            # "loc": get_file_detail(die), wrong for inline
+            "proto": fun_prototype(die),
+        }
+        self.die = die
 
     def load_debug_info(self, elf_data: ElfData, override=False) -> bool:
         """
@@ -67,19 +84,15 @@ class Backtrace:
                 prog = match_subprogram(dbg_info_entry, self.addr)
                 if prog is None:
                     continue
-                fun = as_string(prog.attributes["DW_AT_name"].value)
-                loc = get_file_detail(prog)
-                proto = fun_prototype(prog)
-                self.debug_info = {"fun": fun, "loc": loc, "proto": proto}
+                self.set_debug_info(prog)
                 break
 
             if self.debug_info is not None:
-                return self._load_line_prog(cu_entry, elf_data)
+                self._load_line_prog(elf_data)
+                return
         return False
 
-    def _load_line_prog(
-        self, compile_unit: CompileUnit, elf_data: ElfData, override=False
-    ) -> bool:
+    def _load_line_prog(self, elf_data: ElfData, override=False) -> bool:
         if self.sym is None:
             return False
 
@@ -90,7 +103,7 @@ class Backtrace:
         # then `address` points to the return address and therefore the call address is ra - 4
         addr_ca = self.addr - 4
 
-        line_prog = elf_data.dwarf_info.line_program_for_CU(compile_unit)
+        line_prog = elf_data.dwarf_info.line_program_for_CU(self.die.cu)
         loc_ra = match_line(line_prog, self.addr)
         loc_ca = match_line(line_prog, addr_ca)
 
@@ -104,3 +117,35 @@ class Backtrace:
             self.line_prog = {"file": loc_ca[0], "line": loc_ca[1], "addr": addr_ca}
 
         return True
+
+    def expand_inline(self) -> List[Self]:
+        if self.die is None:
+            return [self]
+
+        # print(f"\n#### expand_inline for{self.sym['name']}")
+        # print(f"     {self.line_prog}")
+        # print(f"     {self.debug_info}")
+
+        inlines = expand_inline(self.die, self.addr)
+        if not inlines:
+            return [self]
+
+        inlines_bt = []
+        for inline in inlines:
+            bt_ = Backtrace(inline["addr"])
+            bt_.set_debug_info(inline["prog"])  # TODO: mark as inline
+            bt_.line_prog = {
+                "file": inline["file"],
+                "line": inline["line"],
+                "addr": inline["addr"],
+            }
+            inlines_bt.append(bt_)
+
+        # propagate backtrace
+        real_line = self.line_prog
+        inlines_bt = [self] + inlines_bt
+        for idx in range(0, len(inlines_bt) - 1):
+            inlines_bt[idx].line_prog = inlines_bt[idx + 1].line_prog
+        inlines_bt[len(inlines_bt) - 1].line_prog = real_line
+
+        return inlines_bt

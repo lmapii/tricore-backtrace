@@ -13,7 +13,11 @@ install_requires = [
     "datetime>=4.2,<5.0",
     "uuid==1.30",
     "htmlmin>=0.1.12",
+    "intelhex>=2.3.0",
     "py-dateutil>=2.2",
+    "protobuf>=3.19.0",
+    "typing>=3.7.4.3",
+    "typing_extensions>=4.4.0",
 ]
 
 entry_points = {"console_scripts": ["tricore_backtrace = tricore_backtrace.cli:main"]}

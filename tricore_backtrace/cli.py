@@ -3,6 +3,8 @@
 Reconstruct backtrace from core dump.
 """
 
+import os
+
 import argparse
 import logging
 import json  # pylint: disable=unused-import
@@ -11,9 +13,12 @@ import coloredlogs
 
 
 from ._version import version
-from .common import abort_with_err
-from . import elfinfo
+from .common import abort_with_err, Err
+from . import elfinfo, dump
 from .backtrace import Backtrace
+
+from .model.exc_pb2 import ExcDefault
+
 
 __V_LEVELS__ = {
     "info": logging.INFO,
@@ -28,42 +33,73 @@ def __execute__(args):  # pylint: disable=unused-argument
     # data = None
     # root_rel = os.path.relpath(os.path.dirname(os.path.abspath(args.json)))
 
-    # ASSUMPTION: The first matching CSAs are responsible for the trap and thus backtrace, all
-    # other CSAs are function calls and therefore we TODO: need to evaluate CALL=RET-4 to get the
-    # actuall call location.
-    csa_list = [
-        {"a11": "0x800661F4", "fun": None, "file": {}, "sym": None},  # u:0
-        {"a11": "0x800661F4", "fun": None, "file": {}, "sym": None},  # h:1
-        {"a11": "0x80066568", "fun": None, "file": {}, "sym": None},  # h:2
-        {"a11": "0x800AC456", "fun": None, "file": {}, "sym": None},  # h:3
-        {"a11": "0x800AC34E", "fun": None, "file": {}, "sym": None},  # h:4
-    ]
-
-    path_ = "_tmp/_bld/out/Ttc2385DemoTrap.elf"
     try:
-        elf_data = elfinfo.ElfData(path_)
-    except elfinfo.ElfInfoError as exc:
-        abort_with_err(f"Failed to load data from {path_}:::{exc}")
+        elf_data = elfinfo.ElfData(args.elf_path)
+    except Err as exc:
+        abort_with_err(f"Failed to load data from {args.elf_path}:::{exc}")
 
-    btraces = []
+    try:
+        dump_data = dump.load(args.dump_path)
+    except Err as exc:
+        abort_with_err(f"Failed to load data from {args.dump_path}:::{exc}")
+
+    msg = ExcDefault()
+    msg.ParseFromString(dump_data)
+
+    csa_list = []
+    for csa in msg.backtrace:
+        a11 = csa.words[1]
+        if csa.is_upper:
+            a11 = csa.words[3]
+        if csa_list and csa_list[-1] == a11:
+            continue
+        csa_list.append(a11)
+        print(f"0x{a11:x}")
+
+    backtrace = []
     for csa in csa_list:
-        btraces.append(Backtrace(csa["a11"]))
+        backtrace.append(Backtrace(csa))
 
     symbols = elf_data.symbols
     for idx in range(0, symbols.__len__() - 1):
-        for trace in btraces:
+        for trace in backtrace:
             trace.load_symbol(symbols[idx], symbols[idx + 1])
 
-    for trace in btraces:
+    for trace in backtrace:
         trace.load_debug_info(elf_data)
 
-    # print(btraces)
-    logging.info("%s", "\n".join([f"{trace}" for trace in btraces]))
+    ext_backtrace = []
+    for trace in backtrace:
+        ext = trace.expand_inline()
+        ext.reverse()
+        ext_backtrace.extend(ext)
+
+    # print(backtrace)
+    logging.info("%s", "\n".join([f"{trace}" for trace in ext_backtrace]))
 
     logging.info("")
     logging.info(":) success")
 
 
+def _arg_is_raw_file(parser_, arg):
+    if not os.path.isfile(arg):
+        parser_.error(f"'{arg}' not found / not a file")
+        return None
+    return arg
+
+
+def _arg_is_elf_file(parser_, arg):
+    if not os.path.isfile(arg):
+        parser_.error(f"'{arg}' not found / not a file")
+        return None
+    ext = str.lower(os.path.splitext(arg)[1])
+    if ext != ".elf":
+        parser_.error(f"Unsupported file '{arg}': expected '.elf' file")
+        return None
+    return arg
+
+
+# tricore_backtrace --dump ..\..\..\BuildFiles\T32\dump.txt --elf ../../../_bld/out/Ttc2385DemoTrap.elf
 def main():  # pylint: disable=missing-function-docstring
     parser_ = argparse.ArgumentParser(description=f"tricore backtrace {version}")
 
@@ -71,8 +107,9 @@ def main():  # pylint: disable=missing-function-docstring
     # https://www.capstone-engine.org/lang_python.html
     # https://github.com/TriDis/ditricore/issues/1
 
-    # TODO: support partial path-map
+    # TODO: support partial path re/map
     # TODO: support --experimental prototype reconstruction
+
     parser_.add_argument(
         "-v",
         "--verbosity",
@@ -81,11 +118,27 @@ def main():  # pylint: disable=missing-function-docstring
         help="verbosity level, one of %s" % list(__V_LEVELS__.keys()),
     )
 
+    parser_.add_argument(
+        "--dump",
+        dest="dump_path",
+        required=True,
+        metavar="dump-path",
+        type=lambda x: _arg_is_raw_file(parser_, x),
+        help="File to decode (typically a .hex file)",
+    )
+
+    parser_.add_argument(
+        "--elf",
+        dest="elf_path",
+        required=True,
+        metavar="elf-path",
+        type=lambda x: _arg_is_elf_file(parser_, x),
+        help="ELF file matching the firmware that created the dump",
+    )
+
     args_ = parser_.parse_args()
 
-    if (
-        args_.verbosity and not args_.verbosity.lower() in __V_LEVELS__
-    ):  # pylint: disable=consider-iterating-dictionary
+    if args_.verbosity and not args_.verbosity.lower() in __V_LEVELS__:
         parser_.error("\nverbosity has to be one of %s" % list(__V_LEVELS__.keys()))
 
     coloredlogs.install(
