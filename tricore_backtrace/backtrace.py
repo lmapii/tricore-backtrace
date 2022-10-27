@@ -97,6 +97,7 @@ class Backtrace:
         if loc_ra is None:
             return False
 
+        # TODO: store both
         if loc_ca is None or loc_ca[1] > loc_ra[1]:
             self.line_prog = {"file": loc_ra[0], "line": loc_ra[1], "addr": self.addr}
         else:
