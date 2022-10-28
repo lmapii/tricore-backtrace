@@ -5,6 +5,7 @@ import os
 import logging
 from typing import List, Tuple
 
+from elftools.dwarf import constants as elfconst
 from elftools.elf.elffile import ELFFile
 from elftools.dwarf.die import DIE
 from elftools.dwarf.lineprogram import LineProgram
@@ -195,6 +196,17 @@ def _traverse_type(die: DIE) -> list[str]:
     return ["<unknown>"]
 
 
+# class FunProto:  # pylint: disable=too-few-public-methods
+#     """
+#     Function prototype.
+#     """
+
+#     def __init__(self) -> None:
+#         self.type_ = None
+#         self.name_ = None
+#         self.args = []
+
+
 def fun_prototype(die: DIE) -> str:
     """
     This function attempts to reconstruct a function prototype using DWARF information. It is higly
@@ -203,6 +215,24 @@ def fun_prototype(die: DIE) -> str:
     if die.tag != "DW_TAG_subprogram":
         raise Err(f"Unsupported tag '{die.tag}', expected 'DW_TAG_subprogram'")
 
+    fun_mod = ""
+    if "DW_AT_inline" in die.attributes:
+        # DW_INL_not_inlined
+        #   Not declared inline nor inlined by the compiler (equivalent to the absence of the
+        #   containing DW_AT_inline attribute)
+        # DW_INL_inlined
+        #   Not declared inline but inlined by the compiler
+        # DW_INL_declared_not_inlined
+        #   Declared inline but not inlined by the compiler
+        # DW_INL_declared_inlined
+        #   Declared inline and inlined by the compiler
+        inlined = [
+            elfconst.DW_INL_declared_not_inlined,
+            elfconst.DW_INL_declared_inlined,
+        ]
+        if die.attributes["DW_AT_inline"].value in inlined:
+            fun_mod = "inline "
+
     fun_name = "<unnamed>"
     if "DW_AT_name" in die.attributes:
         fun_name = as_string(die.attributes["DW_AT_name"].value)
@@ -210,6 +240,7 @@ def fun_prototype(die: DIE) -> str:
     fun_ret = "void"
     if "DW_AT_type" in die.attributes:
         fun_ret = " ".join(_traverse_type(die.get_DIE_from_attribute("DW_AT_type")))
+    fun_ret = fun_mod + fun_ret
 
     fun_args = []
     for child in die.iter_children():
@@ -228,6 +259,10 @@ def fun_prototype(die: DIE) -> str:
 
 
 def expand_inline(die: DIE, addr: int) -> List:
+    """
+    Tries to find inlined functions and recurisvely expands them according to the given address.
+    Returns an empty list if no inline functions could be found.
+    """
     if die is None:
         return []
 

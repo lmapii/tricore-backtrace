@@ -43,6 +43,12 @@ def __execute__(args):  # pylint: disable=unused-argument
     except Err as exc:
         abort_with_err(f"Failed to load data from {args.dump_path}:::{exc}")
 
+    # TODO: change to fixed dump of
+    # 32-bit : trap (TIN + Class)
+    # 32-bit : addrOfAccess
+    # 32-bit : arg (== taskId)
+    # 32-bit : arg (== coreIdx)
+    # 32-bit a11 / backtrace
     msg = ExcDefault()
     msg.ParseFromString(dump_data)
 
@@ -74,8 +80,28 @@ def __execute__(args):  # pylint: disable=unused-argument
         ext.reverse()
         ext_backtrace.extend(ext)
 
+    for trace in ext_backtrace:
+        if trace.debug_info:
+            name_ = trace.debug_info["fun"]
+            if trace.debug_info["proto"]:
+                name_ = trace.debug_info["proto"]
+            loc = "??"
+            if trace.line_prog:
+                loc = f"{trace.line_prog['file']} at line {trace.line_prog['line']}"
+                inline_prog = trace.line_prog["inline"]
+                if inline_prog:
+                    loc += f" // inlined in {inline_prog['file']} at line {inline_prog['line']}"
+            # logging.info("0x%x %s // in %s", trace.addr, name_, loc)
+            logging.info("0x%x", trace.addr)
+            logging.info("  %s", name_)
+            logging.info("    in %s", loc)
+        elif trace.sym:
+            logging.info("0x%x %s", trace.addr, trace.sym["name"])
+        else:
+            logging.info("0x%x <unknown>", trace.addr)
+
     # print(backtrace)
-    logging.info("%s", "\n".join([f"{trace}" for trace in ext_backtrace]))
+    # logging.info("%s", "\n".join([f"{trace}" for trace in ext_backtrace]))
 
     logging.info("")
     logging.info(":) success")

@@ -88,8 +88,7 @@ class Backtrace:
                 break
 
             if self.debug_info is not None:
-                self._load_line_prog(elf_data)
-                return
+                return self._load_line_prog(elf_data)
         return False
 
     def _load_line_prog(self, elf_data: ElfData, override=False) -> bool:
@@ -110,12 +109,13 @@ class Backtrace:
         if loc_ra is None:
             return False
 
-        # TODO: store both
+        # TODO: store both, the call estimate and the actual position
         if loc_ca is None or loc_ca[1] > loc_ra[1]:
             self.line_prog = {"file": loc_ra[0], "line": loc_ra[1], "addr": self.addr}
         else:
             self.line_prog = {"file": loc_ca[0], "line": loc_ca[1], "addr": addr_ca}
 
+        self.line_prog["inline"] = None
         return True
 
     def expand_inline(self) -> List[Self]:
@@ -133,19 +133,28 @@ class Backtrace:
         inlines_bt = []
         for inline in inlines:
             bt_ = Backtrace(inline["addr"])
-            bt_.set_debug_info(inline["prog"])  # TODO: mark as inline
+            bt_.set_debug_info(inline["prog"])
             bt_.line_prog = {
                 "file": inline["file"],
                 "line": inline["line"],
                 "addr": inline["addr"],
+                "inline": None,
             }
             inlines_bt.append(bt_)
 
-        # propagate backtrace
+        # propagate backtraces down the inline callstack
         real_line = self.line_prog
         inlines_bt = [self] + inlines_bt
         for idx in range(0, len(inlines_bt) - 1):
+            line_prog = inlines_bt[idx].line_prog
             inlines_bt[idx].line_prog = inlines_bt[idx + 1].line_prog
+            inlines_bt[idx].line_prog["inline"] = line_prog
+
+        # the initial address is the actual call address of the last inlined function
         inlines_bt[len(inlines_bt) - 1].line_prog = real_line
+        inlines_bt[len(inlines_bt) - 1].line_prog["inline"] = inlines_bt[
+            len(inlines_bt) - 2
+        ].line_prog
+        inlines_bt[0].line_prog["inline"] = None
 
         return inlines_bt
