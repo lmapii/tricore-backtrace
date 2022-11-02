@@ -1,20 +1,11 @@
 # -*- coding: utf-8 -*-
 
 import os
-import logging
 
-from array import array
 from typing import Any
-
-import zlib
-
 from intelhex import IntelHex
 
 from .common import Err
-
-
-def __calc_crc__(data: array | bytes) -> int:
-    return 0xFFFFFFFF - zlib.crc32(data, 0)
 
 
 def load(path_: str, offset=0) -> Any | bytes:
@@ -44,22 +35,5 @@ def load(path_: str, offset=0) -> Any | bytes:
             "Are you sure that this is a valid .bin/.hex file?"
         )
 
-    crc_ = int("".join([f"{ihex_data[offset + 0 + i]:02X}" for i in range(4)]), 16)
-    len_ = int("".join([f"{ihex_data[offset + 4 + i]:02X}" for i in range(4)]), 16)
-
-    # plausibility check for length
-    if len_ > data_length:
-        raise Err(f"Encoded length {len_} is larger than file size {data_length}")
-    raw_ = ihex_data[offset + 8 : offset + 8 + len_].tobinstr()
-
-    crc_calc = __calc_crc__(raw_)
-    logging.debug("Message length is %d bytes (file size is %d bytes)", len_, len(raw_))
-    logging.debug(
-        "Message checksum 0x%08X (calculated checksum 0x%08X)", crc_, crc_calc
-    )
-
-    if crc_calc != crc_:
-        raise Err(
-            f"CRC mismatch:::0x{crc_:08X} does not match calculated CRC 0x{crc_calc:08X}",
-        )
+    raw_ = ihex_data[offset : offset + data_length - offset].tobinstr()
     return raw_

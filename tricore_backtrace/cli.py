@@ -17,8 +17,6 @@ from .common import abort_with_err, Err
 from . import elfinfo, dump
 from .backtrace import Backtrace
 
-from .model.exc_pb2 import ExcDefault
-
 
 __V_LEVELS__ = {
     "info": logging.INFO,
@@ -43,24 +41,23 @@ def __execute__(args):  # pylint: disable=unused-argument
     except Err as exc:
         abort_with_err(f"Failed to load data from {args.dump_path}:::{exc}")
 
-    # TODO: change to fixed dump of
-    # 32-bit : trap (TIN + Class)
-    # 32-bit : addrOfAccess
-    # 32-bit : arg (== taskId)
-    # 32-bit : arg (== coreIdx)
-    # 32-bit a11 / backtrace
-    msg = ExcDefault()
-    msg.ParseFromString(dump_data)
+    dump_ = [dump_data[i : i + 4] for i in range(0, len(dump_data), 4)]
+    dump_ = [int.from_bytes(d, byteorder="little") for d in dump_]
+    dump_ = [d for d in dump_ if d != 0]
+    # dump_ = [
+    #     int.from_bytes(struct.pack("<1i", *struct.unpack(">1i", d))) for d in dump_
+    # ]
+    print(
+        json.dumps(
+            [f"0x{d:x}" for d in dump_],
+            indent=2,
+        )
+    )
 
     csa_list = []
-    for csa in msg.backtrace:
-        a11 = csa.words[1]
-        if csa.is_upper:
-            a11 = csa.words[3]
-        if csa_list and csa_list[-1] == a11:
-            continue
+    for idx in range(4, len(dump_)):
+        a11 = dump_[idx]
         csa_list.append(a11)
-        print(f"0x{a11:x}")
 
     backtrace = []
     for csa in csa_list:
