@@ -87,7 +87,7 @@ def match_address(entry: DIE, address: int) -> bool:
         )
         return False
 
-    if lo_pc_val <= address < hi_pc:
+    if lo_pc_val <= address <= hi_pc:
         return True
     return False
 
@@ -276,11 +276,11 @@ def expand_inline(die: DIE, addr: int) -> List:
         if "DW_AT_call_line" not in child.attributes:
             continue
 
-        prog = child.get_DIE_from_attribute("DW_AT_abstract_origin")
         # check if we can find a subprogram / debug information for the inlined function
         if not match_address(child, addr):
             continue
 
+        prog = child.get_DIE_from_attribute("DW_AT_abstract_origin")
         call_line = child.attributes["DW_AT_call_line"].value
         line_prog = die.dwarfinfo.line_program_for_CU(die.cu)
 

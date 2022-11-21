@@ -122,7 +122,7 @@ class Backtrace:
         if self.die is None:
             return [self]
 
-        # print(f"\n#### expand_inline for{self.sym['name']}")
+        # print(f"\n#### expand_inline for {self.sym['name']}")
         # print(f"     {self.line_prog}")
         # print(f"     {self.debug_info}")
 
