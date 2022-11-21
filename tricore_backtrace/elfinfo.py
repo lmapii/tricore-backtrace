@@ -281,11 +281,10 @@ def expand_inline(die: DIE, addr: int) -> List:
         if not match_address(child, addr):
             continue
 
-        # we found an a child with a known call line
-        prog = child.get_DIE_from_attribute("DW_AT_abstract_origin")
-
         call_line = child.attributes["DW_AT_call_line"].value
         line_prog = die.dwarfinfo.line_program_for_CU(die.cu)
+
+        # try to find the exact location of the inlined function to further decompose it
         for entry in line_prog.get_entries():
             if entry.state is None:
                 continue
@@ -299,5 +298,22 @@ def expand_inline(die: DIE, addr: int) -> List:
                         "prog": prog,
                     }
                 ] + expand_inline(child, addr)
+
+        # if we didn't find an exact match, assume the inlined function is placed within the
+        # same compilation unit. notice that the call_line and address have already been matched
+        try:
+            filename = as_string(die.cu.get_top_DIE().attributes["DW_AT_name"].value)
+            filename = os.path.basename(filename)
+        except:  # pylint: disable=bare-except
+            filename = "??"
+
+        return [
+            {
+                "line": call_line,
+                "file": filename,
+                "addr": addr,
+                "prog": prog,
+            }
+        ] + expand_inline(child, addr)
 
     return []
